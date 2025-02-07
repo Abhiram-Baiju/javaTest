@@ -1,0 +1,238 @@
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+
+import javax.net.ssl.HttpsURLConnection;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.Scanner;
+
+class APIUtility {
+    static final String baseurl = "https://tm.com";  
+    static String bearerToken;
+    static String companyId;
+    static int repetition;
+    static int testInterval;
+    static String email;
+    static String password;
+
+    public static synchronized void setToken(String token) {
+        bearerToken = token;
+    }
+
+    public static synchronized String getToken() {
+        return bearerToken;
+    }
+
+    // Method to read credentials from Excel
+    public static void readCredentialsFromExcel(String filePath) {
+        try (FileInputStream file = new FileInputStream(new File(filePath));
+             Workbook workbook = new XSSFWorkbook(file)) {
+
+            Sheet sheet = workbook.getSheetAt(0);
+            Row row = sheet.getRow(1); // Read second row (index 1)
+
+            email = row.getCell(0).getStringCellValue();    // Read email from column A
+            password = row.getCell(1).getStringCellValue(); // Read password from column B
+
+            System.out.println("Credentials Loaded: Email = " + email + ", Password = " + password);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+class Ot extends Thread {
+    static String bToken;
+
+    public void run() {
+        APIUtility.repetition = 5;
+        for (int i = 0; i < APIUtility.repetition; i++) {
+            otLogin();
+            try {
+                Thread.sleep(APIUtility.testInterval);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    static void otLogin() {
+        try {
+            String endpoint = "/api/v1/user/ot-login";
+            URL url = new URL(APIUtility.baseurl + endpoint);
+            HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
+
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setDoOutput(true);
+
+            // Use dynamic email and password
+            String jsonInputString = "{\"email\":\"" + APIUtility.email + "\",\"password\":\"" + APIUtility.password + "\"}";
+
+            try (OutputStream os = connection.getOutputStream()) {
+                byte[] input = jsonInputString.getBytes(StandardCharsets.UTF_8);
+                os.write(input, 0, input.length);
+            }
+
+            int responseCode = connection.getResponseCode();
+            System.out.println("Response Code (ot login):  " + responseCode);
+
+            if (responseCode == HttpsURLConnection.HTTP_OK) {
+                StringBuilder body = new StringBuilder();
+                Scanner scanner = new Scanner(connection.getInputStream());
+                while (scanner.hasNext()) {
+                    body.append(scanner.nextLine());
+                }
+
+                try {
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    JsonNode rootNode = objectMapper.readTree(body.toString());
+                    bToken = rootNode.path("token").path("token").asText();
+                    APIUtility.setToken(bToken);
+                    System.out.println("OT Login Successful. Token: " + bToken);
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            } else {
+                System.out.println("OT Login Failed");
+            }
+            connection.disconnect();
+
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
+
+class Track extends Thread {
+    public void run() {
+        for (int i = 0; i < APIUtility.repetition; i++) {
+            System.out.println("Testing -**********-TRACK-***********");
+            tracLogin();
+            getter();
+            try {
+                Thread.sleep(APIUtility.testInterval);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    static void tracLogin() {
+        try {
+            String endpoint = "/api/v1/user/mfa-login";
+            URL url = new URL(APIUtility.baseurl + endpoint);
+            HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
+
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setDoOutput(true);
+
+            // Use dynamic email and password
+            String jsonInputString = "{\"email\":\"" + APIUtility.email + "\",\"password\":\"" + APIUtility.password + "\",\"mfa_based_login\":false}";
+
+            try (OutputStream os = connection.getOutputStream()) {
+                byte[] input = jsonInputString.getBytes(StandardCharsets.UTF_8);
+                os.write(input, 0, input.length);
+            }
+
+            int responseCode = connection.getResponseCode();
+            System.out.println("Response Code (Track Login):  " + responseCode);
+
+            if (responseCode == HttpsURLConnection.HTTP_OK) {
+                StringBuilder body = new StringBuilder();
+                Scanner scanner = new Scanner(connection.getInputStream());
+                while (scanner.hasNext()) {
+                    body.append(scanner.nextLine());
+                }
+
+                try {
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    JsonNode rootNode = objectMapper.readTree(body.toString());
+                    APIUtility.setToken(rootNode.path("token").path("token").asText());
+                    System.out.println("Track Login Successful. Token: " + APIUtility.getToken());
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            } else {
+                System.out.println("Track Login Failed");
+            }
+            connection.disconnect();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    static void getter() {
+        try {
+            String endpoint = "/api/v1/dashboard/web/get-data";
+            URL url = new URL(APIUtility.baseurl + endpoint);
+            HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
+            connection.setRequestProperty("Authorization", "Bearer " + APIUtility.getToken());
+
+            connection.setRequestMethod("GET");
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/json");
+
+            int responseCode = connection.getResponseCode();
+            System.out.println("Response Code (Getter): " + responseCode);
+
+            if (responseCode == HttpsURLConnection.HTTP_OK) {
+                BufferedReader bf = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+                StringBuilder responseBody = new StringBuilder();
+                String line;
+                while ((line = bf.readLine()) != null) {
+                    responseBody.append(line);
+                }
+                ObjectMapper objectMapper = new ObjectMapper();
+                objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
+                System.out.println("Response Body (Getter): " + objectMapper.readTree(responseBody.toString()));
+            } else {
+                System.out.println("Getter API Error");
+            }
+            connection.disconnect();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        APIUtility.readCredentialsFromExcel("credentials.xlsx"); // Read credentials
+
+        Scanner input = new Scanner(System.in);
+        System.out.println("API Tester");
+        System.out.println("1. Track\n2. OT\n3. Combined\n0. Exit");
+
+        String option = input.nextLine();
+        switch (option) {
+            case "1":
+                new Track().start();
+                break;
+            case "2":
+                new Ot().start();
+                break;
+            case "3":
+                new Ot().start();
+                new Track().start();
+                break;
+            case "0":
+                System.out.println("Exiting...");
+                System.exit(0);
+            default:
+                System.out.println("Invalid option");
+        }
+    }
+}

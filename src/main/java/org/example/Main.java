@@ -1,13 +1,20 @@
 package org.example;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+
 
 import javax.net.ssl.HttpsURLConnection;
 import java.io.*;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Scanner;
 
 import static java.lang.System.exit;
@@ -19,6 +26,8 @@ class APIUtility {
     static String companyId;
     static int repetition;
     static int testInterval;
+    static String email;
+    static String password;
 
     public static synchronized void setToken(String token) {
         bearerToken = token;
@@ -27,6 +36,24 @@ class APIUtility {
     public static synchronized String getToken() {
         return bearerToken;
     }
+
+    // Method to read credentials from Excel
+    public static void readCredentialsFromExcel(String filePath) {
+        try (FileInputStream file = new FileInputStream(new File(filePath));
+             Workbook workbook = new XSSFWorkbook(file)) {
+
+            Sheet sheet = workbook.getSheetAt(0);
+            Row row = sheet.getRow(1); // Read second row (index 1)
+
+            email = row.getCell(0).getStringCellValue();    // Read email from column A
+            password = row.getCell(1).getStringCellValue(); // Read password from column B
+
+            System.out.println("Credentials Loaded: Email = " + email + ", Password = " + password);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
 }
 
 
@@ -46,6 +73,7 @@ class Ot extends Thread{
        }
    }
 
+
     static void otLogin(){
         try {
             String endpoint="/api/v1/user/ot-login";
@@ -57,7 +85,8 @@ class Ot extends Thread{
             connection.setRequestProperty("Content-Type","application/json");
             connection.setRequestProperty("Accept","application/json");
             connection.setDoOutput(true);
-            String jsonInputString="{\"email\":\"abhiramot@seemymachines.com\",\"password\":\"Abhiram@123\"}";
+//            String jsonInputString="{\"email\":\"abhiramot@seemymachines.com\",\"password\":\"Abhiram@123\"}";
+            String jsonInputString = "{\"email\":\"" + APIUtility.email + "\",\"password\":\"" + APIUtility.password + "\"}";
 
             try (OutputStream os = connection.getOutputStream()) {
                 byte[] input = jsonInputString.getBytes(StandardCharsets.UTF_8);
@@ -158,8 +187,8 @@ class Track extends Thread{
                 connection.setRequestProperty("Content-Type", "application/json");
                 connection.setRequestProperty("Accept", "application/json");
                 connection.setDoOutput(true);
-                String jsonInputString = "{\"email\":\"abhiram@seemymachines.com\",\"password\":\"Abhiram@123\",\"mfa_based_login\":false}";
-
+//                String jsonInputString = "{\"email\":\"abhiram@seemymachines.com\",\"password\":\"Abhiram@123\",\"mfa_based_login\":false}";
+                String jsonInputString = "{\"email\":\"" + APIUtility.email + "\",\"password\":\"" + APIUtility.password + "\",\"mfa_based_login\":false}";
                 try (OutputStream os = connection.getOutputStream()) {
                     byte[] input = jsonInputString.getBytes(StandardCharsets.UTF_8);
                     os.write(input, 0, input.length);
@@ -361,6 +390,10 @@ class Track extends Thread{
 
 public class Main {
     public static void main(String[] args) throws IOException {
+        String filePath = "C:\\Users\\DELL\\Downloads\\demo.xlsx";
+        APIUtility.readCredentialsFromExcel(filePath);
+
+
 
         Scanner input = new Scanner(System.in);
         System.out.println("Api tester");

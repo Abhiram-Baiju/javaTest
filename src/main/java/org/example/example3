@@ -1,0 +1,189 @@
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+
+import javax.net.ssl.HttpsURLConnection;
+import java.io.*;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+
+class APIUtility {
+    static final String BASE_URL = "https://tm.com";
+    static String bearerToken;
+    static int repetition;
+    static int testInterval;
+
+    public static synchronized void setToken(String token) {
+        bearerToken = token;
+    }
+
+    public static synchronized String getToken() {
+        return bearerToken;
+    }
+}
+
+class ExcelReader {
+    private static final String FILE_PATH = "API_Details.xlsx";
+
+    public static List<Map<String, String>> readExcelData() {
+        List<Map<String, String>> apiDataList = new ArrayList<>();
+        try (FileInputStream fis = new FileInputStream(FILE_PATH);
+             Workbook workbook = new XSSFWorkbook(fis)) {
+            Sheet sheet = workbook.getSheetAt(0);
+            Row headerRow = sheet.getRow(0);
+            int columnCount = headerRow.getPhysicalNumberOfCells();
+
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row row = sheet.getRow(i);
+                if (row == null) continue;
+
+                Map<String, String> apiData = new HashMap<>();
+                for (int j = 0; j < columnCount; j++) {
+                    String key = headerRow.getCell(j).getStringCellValue().trim();
+                    String value = (row.getCell(j) != null) ? row.getCell(j).toString().trim() : "";
+                    apiData.put(key, value);
+                }
+                apiDataList.add(apiData);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return apiDataList;
+    }
+}
+
+class APIRequest {
+    public static String sendRequest(String endpoint, String method, String payload, boolean requiresAuth) {
+        try {
+            URL url = new URL(APIUtility.BASE_URL + endpoint);
+            HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
+
+            connection.setRequestMethod(method);
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Accept", "application/json");
+            if (requiresAuth) {
+                connection.setRequestProperty("Authorization", "Bearer " + APIUtility.getToken());
+            }
+
+            if (!payload.isEmpty() && (method.equalsIgnoreCase("POST") || method.equalsIgnoreCase("PUT"))) {
+                connection.setDoOutput(true);
+                try (OutputStream os = connection.getOutputStream()) {
+                    os.write(payload.getBytes(StandardCharsets.UTF_8));
+                }
+            }
+
+            int responseCode = connection.getResponseCode();
+            System.out.println("Response Code (" + endpoint + "): " + responseCode);
+
+            StringBuilder response = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    response.append(line);
+                }
+            }
+
+            if (responseCode == HttpsURLConnection.HTTP_OK) {
+                return response.toString();
+            } else {
+                System.out.println("API Error: " + response);
+                return null;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+}
+
+class APIProcessor extends Thread {
+    private final List<Map<String, String>> apiDataList;
+    private final String apiType;
+
+    public APIProcessor(List<Map<String, String>> apiDataList, String apiType) {
+        this.apiDataList = apiDataList;
+        this.apiType = apiType;
+    }
+
+    public void run() {
+        for (int i = 0; i < APIUtility.repetition; i++) {
+            System.out.println("\nExecuting API Tests for: " + apiType);
+            for (Map<String, String> apiData : apiDataList) {
+                if (!apiData.get("API Name").startsWith(apiType)) continue;
+
+                String endpoint = apiData.get("Endpoint");
+                String method = apiData.get("Method");
+                String payload = apiData.get("Payload").replace("<email>", apiData.get("Email"))
+                                                       .replace("<password>", apiData.get("Password"));
+                boolean requiresAuth = !apiData.get("API Name").contains("Login");
+
+                String response = APIRequest.sendRequest(endpoint, method, payload, requiresAuth);
+                if (response != null && apiData.get("API Name").contains("Login")) {
+                    try {
+                        JsonNode rootNode = new ObjectMapper().readTree(response);
+                        String token = rootNode.path("token").path("token").asText();
+                        APIUtility.setToken(token);
+                        System.out.println("Token Set: " + token);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+
+            try {
+                Thread.sleep(APIUtility.testInterval);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        List<Map<String, String>> apiDataList = ExcelReader.readExcelData();
+        Scanner input = new Scanner(System.in);
+
+        System.out.println("API Tester");
+        while (true) {
+            System.out.println("\n1. Track\n2. OT\n3. Combined\n0. Exit");
+            System.out.print("Enter your option: ");
+            String option = input.nextLine();
+
+            switch (option) {
+                case "1": {
+                    APIProcessor trackTest = new APIProcessor(apiDataList, "Track");
+                    trackTest.start();
+                    break;
+                }
+                case "2": {
+                    APIProcessor otTest = new APIProcessor(apiDataList, "OT");
+                    otTest.start();
+                    break;
+                }
+                case "3": {
+                    System.out.print("Enter Thread Count: ");
+                    APIUtility.repetition = input.nextInt();
+                    System.out.print("Enter Test Interval (ms): ");
+                    APIUtility.testInterval = input.nextInt();
+                    input.nextLine();
+
+                    APIProcessor trackTest = new APIProcessor(apiDataList, "Track");
+                    APIProcessor otTest = new APIProcessor(apiDataList, "OT");
+
+                    trackTest.start();
+                    otTest.start();
+                    break;
+                }
+                case "0":
+                    System.out.println("Exiting...");
+                    return;
+                default:
+                    System.out.println("Invalid option.");
+            }
+        }
+    }
+}
