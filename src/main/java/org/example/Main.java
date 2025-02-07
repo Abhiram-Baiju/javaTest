@@ -62,7 +62,6 @@ class Ot extends Thread{
    static String bToken;
 
    public void run(){
-       APIUtility.repetition=5;
        for(int i=0;i<APIUtility.repetition;i++){
        otLogin();
            try {
@@ -443,8 +442,3 @@ public class Main {
         while (true);
     }
 }
-
-
-
-
-
