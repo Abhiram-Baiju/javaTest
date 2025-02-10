@@ -1,0 +1,177 @@
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import java.io.File;
+import java.io.FileInputStream;
+
+public class ExcelReader {
+    public static void readAllCredentialsFromExcel(String filePath) {
+        try (FileInputStream file = new FileInputStream(new File(filePath));
+             Workbook workbook = new XSSFWorkbook(file)) {
+
+            Sheet sheet = workbook.getSheetAt(0);
+
+            // Start from row 1 (skip header row 0)
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row row = sheet.getRow(i);
+                if (row == null || row.getCell(0) == null || row.getCell(1) == null) {
+                    continue; // Skip empty rows
+                }
+
+                String email = row.getCell(0).getStringCellValue();
+                String password = row.getCell(1).getStringCellValue();
+                System.out.println("Email: " + email + ", Password: " + password);
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        readAllCredentialsFromExcel("path/to/credentials.xlsx");
+    }
+}
+
+
+
+
+
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.nio.charset.StandardCharsets;
+import java.net.*;
+import javax.net.ssl.HttpsURLConnection;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+
+class APIUtility {
+    static final String baseurl = "https://tm-qa.seemymachines.com";
+    static int testInterval;
+    static List<UserCredential> credentials = new ArrayList<>();
+
+    public static synchronized void readCredentialsFromExcel(String filePath) {
+        try (FileInputStream file = new FileInputStream(new File(filePath));
+             Workbook workbook = new XSSFWorkbook(file)) {
+
+            Sheet sheet = workbook.getSheetAt(0);
+            int rowCount = sheet.getPhysicalNumberOfRows();
+
+            for (int i = 1; i < rowCount; i++) {  // Start from index 1 (skip header)
+                Row row = sheet.getRow(i);
+                if (row != null) {
+                    String email = row.getCell(0).getStringCellValue();
+                    String password = row.getCell(1).getStringCellValue();
+                    credentials.add(new UserCredential(email, password));
+                }
+            }
+
+            System.out.println("Loaded " + credentials.size() + " user credentials.");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+class UserCredential {
+    String email;
+    String password;
+
+    public UserCredential(String email, String password) {
+        this.email = email;
+        this.password = password;
+    }
+}
+
+// Task that logs in a user
+class LoginTask implements Runnable {
+    private final UserCredential credential;
+
+    public LoginTask(UserCredential credential) {
+        this.credential = credential;
+    }
+
+    @Override
+    public void run() {
+        try {
+            String endpoint = "/api/v1/user/ot-login";
+            URL url = new URL(APIUtility.baseurl + endpoint);
+            HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
+
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setDoOutput(true);
+
+            String jsonInputString = "{\"email\":\"" + credential.email + "\",\"password\":\"" + credential.password + "\"}";
+
+            try (OutputStream os = connection.getOutputStream()) {
+                byte[] input = jsonInputString.getBytes(StandardCharsets.UTF_8);
+                os.write(input, 0, input.length);
+            }
+
+            int responseCode = connection.getResponseCode();
+            System.out.println("[" + credential.email + "] Response Code (login): " + responseCode);
+
+            if (responseCode == HttpsURLConnection.HTTP_OK) {
+                StringBuilder responseBody = new StringBuilder();
+                Scanner scanner = new Scanner(connection.getInputStream());
+                while (scanner.hasNext()) {
+                    responseBody.append(scanner.nextLine());
+                }
+                scanner.close();
+
+                // Parse response
+                ObjectMapper objectMapper = new ObjectMapper();
+                JsonNode rootNode = objectMapper.readTree(responseBody.toString());
+                String token = rootNode.path("token").path("token").asText();
+
+                System.out.println("[" + credential.email + "] Login Successful, Token: " + token);
+            } else {
+                System.out.println("[" + credential.email + "] Login Failed.");
+            }
+
+            connection.disconnect();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+public class Main {
+    public static void main(String[] args) throws IOException {
+        String filePath = "C:\\Users\\DELL\\Downloads\\demo.xlsx";
+        APIUtility.readCredentialsFromExcel(filePath);
+
+        if (APIUtility.credentials.isEmpty()) {
+            System.out.println("No credentials found in the Excel sheet.");
+            return;
+        }
+
+        Scanner input = new Scanner(System.in);
+        System.out.println("Enter Test Interval (ms): ");
+        APIUtility.testInterval = input.nextInt();
+
+        // Create a thread pool with the number of credentials
+        int threadCount = APIUtility.credentials.size();
+        ExecutorService pool = Executors.newFixedThreadPool(threadCount);
+
+        // Assign each credential to a thread
+        for (UserCredential credential : APIUtility.credentials) {
+            pool.execute(new LoginTask(credential));
+        }
+
+        // Shutdown the pool gracefully after tasks are complete
+        pool.shutdown();
+        try {
+            if (!pool.awaitTermination(60, TimeUnit.SECONDS)) {
+                pool.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            pool.shutdownNow();
+        }
+    }
+}
